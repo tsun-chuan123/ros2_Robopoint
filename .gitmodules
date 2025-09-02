@@ -4,3 +4,6 @@
 [submodule "librealsense"]
 	path = librealsense
 	url = https://github.com/IntelRealSense/librealsense.git
+[submodule "ros2_ws/src/realsense-ros"]
+	path = ros2_ws/src/realsense-ros
+	url = https://github.com/IntelRealSense/realsense-ros.git
