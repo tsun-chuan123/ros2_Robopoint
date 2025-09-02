@@ -27,6 +27,7 @@ setup(
         'console_scripts': [
             'robopoint_node = robopoint_ros2.robopoint_node:main',
             'robopoint_client = robopoint_ros2.robopoint_client:main',
+            'camera_publisher_node = robopoint_ros2.camera_publisher_node:main',
         ],
     },
 )

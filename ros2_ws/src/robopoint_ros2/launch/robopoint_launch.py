@@ -48,7 +48,7 @@ def generate_launch_description():
         # Camera parameters
         DeclareLaunchArgument(
             'camera_device',
-            default_value='/dev/video2',
+            default_value='/dev/video6',
             description='Camera device path or index'
         ),
         

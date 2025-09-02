@@ -29,7 +29,8 @@ else
 fi
 
 start_interactive_session() {
-  docker exec -e DISPLAY=$DISPLAY_TO_USE -e XAUTHORITY=/root/.Xauthority -u root -it $CONTAINER_NAME bash -ic '
+  docker exec -e DISPLAY=$DISPLAY_TO_USE -e XAUTHORITY=/root/.Xauthority -e ROS_DOMAIN_ID=15 -u root -it $CONTAINER_NAME bash -ic '
+    export ROS_DOMAIN_ID=15
     CHOICE=$(whiptail --title "ROS 2 Launch Menu" --menu "Please select a task:" 18 70 10 \
       "Controller" "starts the worker manager" \
       "Worker" "loads a model and connects to the controller" \
@@ -41,6 +42,7 @@ start_interactive_session() {
 
     case "$CHOICE" in
       Controller)
+        export ROS_DOMAIN_ID=15
         cd ros2_ws/
         source /opt/ros/humble/setup.bash
         colcon build --merge-install
@@ -48,6 +50,7 @@ start_interactive_session() {
         ros2 launch robopoint_controller controller.launch.py
         ;;
       Worker)
+        export ROS_DOMAIN_ID=15
         cd ros2_ws/
         source /opt/ros/humble/setup.bash
         colcon build --merge-install
@@ -55,6 +58,7 @@ start_interactive_session() {
         ros2 launch robopoint_worker model_worker.launch.py model_path:=wentao-yuan/robopoint-v1-vicuna-v1.5-13b
         ;;
       Client)
+        export ROS_DOMAIN_ID=15
         cd ros2_ws/
         source /opt/ros/humble/setup.bash
         colcon build --merge-install
@@ -62,6 +66,7 @@ start_interactive_session() {
         ros2 launch robopoint_ros2 robopoint_launch.py
         ;;
       GUI)
+        export ROS_DOMAIN_ID=15
         cd ros2_ws/
         source /opt/ros/humble/setup.bash
         colcon build --merge-install
@@ -69,6 +74,7 @@ start_interactive_session() {
         ros2 run robopoint_gui robopoint_gui_node
         ;;
       Stretch_Bridge)
+        export ROS_DOMAIN_ID=15
         cd ros2_ws/
         source /opt/ros/humble/setup.bash
         colcon build --merge-install
@@ -76,6 +82,7 @@ start_interactive_session() {
         ros2 run robopoint_stretch_bridge stretch_bridge
         ;;
       ros2_ws)
+        export ROS_DOMAIN_ID=15
         cd ros2_ws/
         source /opt/ros/humble/setup.bash
         colcon build --merge-install
@@ -104,8 +111,6 @@ else
 
   DOCKER_CMD="docker run -dit \
     --privileged \
-    --runtime nvidia \
-    --gpus all \
     --name $CONTAINER_NAME \
     -u root \
     -e DISPLAY=$DISPLAY_TO_USE \
@@ -114,11 +119,11 @@ else
     -e HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN \
     -e QT_X11_NO_MITSHM=1 \
     -e PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native \
+    -e ROS_DOMAIN_ID=15 \
     --device /dev/snd \
     --group-add audio \
     -v $HOST_DIR:$WORKDIR \
     -v /dev:/dev \
-    -v /opt/nvidia:/opt/nvidia \
     -v /run/user/1000/pulse:/run/user/1000/pulse \
     -v /etc/machine-id:/etc/machine-id \
     -v /run/dbus:/run/dbus \

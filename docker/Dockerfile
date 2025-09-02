@@ -73,7 +73,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
     python3 -m pip install --no-cache-dir \
       soundfile transformers accelerate sentencepiece protobuf && \
     python3 -m pip install --no-cache-dir \
-      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 && \
+      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
     python3 -m pip install --no-cache-dir opencv-python && \
     true
 

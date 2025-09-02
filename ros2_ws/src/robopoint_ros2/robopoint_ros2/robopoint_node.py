@@ -42,7 +42,7 @@ class RoboPointNode(Node):
         # Initialize logger
         self.logger = build_logger("robopoint_ros2", "robopoint_ros2.log")
         
-        # Priority for model selection - 定義在使用之前
+        # Priority for model selection
         self.priority = {
             "vicuna-13b": "aaaaaaa",
             "koala-13b": "aaaaaab",
@@ -55,12 +55,6 @@ class RoboPointNode(Node):
         self.declare_parameter('max_output_tokens', 512)
         self.declare_parameter('model_name', '')
         self.declare_parameter('service_timeout', 30.0)
-        # Camera parameters
-        self.declare_parameter('camera_device', '/dev/video4')
-        self.declare_parameter('camera_fps', 30.0)
-        self.declare_parameter('camera_width', 640)
-        self.declare_parameter('camera_height', 480)
-        self.declare_parameter('enable_camera', True)
         
         self.moderate = self.get_parameter('moderate').value
         self.temperature = self.get_parameter('temperature').value
@@ -68,12 +62,6 @@ class RoboPointNode(Node):
         self.max_output_tokens = self.get_parameter('max_output_tokens').value
         self.model_name = self.get_parameter('model_name').value
         self.service_timeout = self.get_parameter('service_timeout').value
-        # Camera parameters
-        self.camera_device = self.get_parameter('camera_device').value
-        self.camera_fps = self.get_parameter('camera_fps').value
-        self.camera_width = self.get_parameter('camera_width').value
-        self.camera_height = self.get_parameter('camera_height').value
-        self.enable_camera = self.get_parameter('enable_camera').value
         
         # Initialize CV bridge
         self.bridge = CvBridge()
@@ -81,15 +69,10 @@ class RoboPointNode(Node):
         # Initialize conversation state
         self.conversation_state = default_conversation.copy()
         
-        # Camera related variables
-        self.camera = None
-        self.camera_thread = None
-        self.camera_running = False
-        
         # Get available models
-        # 延後取得模型清單，確保其他節點都已準備好
         self.models = []
-        self.create_timer(5.0, self.delayed_model_init)
+        self.model_init_timer = self.create_timer(5.0, self.delayed_model_init)
+        self.model_initialized = False
         
         # Publishers
         self.affordance_pub = self.create_publisher(
@@ -104,13 +87,6 @@ class RoboPointNode(Node):
             10
         )
         
-        # Camera image publisher
-        self.camera_pub = self.create_publisher(
-            Image,
-            'camera/image_raw',
-            10
-        )
-        
         # Subscribers
         self.query_sub = self.create_subscription(
             SpatialAffordanceQuery,
@@ -119,11 +95,26 @@ class RoboPointNode(Node):
             10
         )
         
-        # Optional: still keep the external image subscription for flexibility
+        # Subscribe to external camera images (from GUI)
         self.image_sub = self.create_subscription(
             Image,
             'external_camera/image_raw',
             self.handle_image_callback,
+            10
+        )
+        
+        # Subscribe to RealSense cameras (from camera publisher node)
+        self.realsense_main_sub = self.create_subscription(
+            Image,
+            '/camera/camera/color/image_raw',
+            self.handle_realsense_callback,
+            10
+        )
+        
+        self.realsense_gripper_sub = self.create_subscription(
+            Image,
+            '/gripper_camera/gripper_camera/color/image_raw',
+            self.handle_realsense_callback,
             10
         )
         
@@ -137,133 +128,32 @@ class RoboPointNode(Node):
         # Store latest image
         self.latest_image = None
         self.latest_pil_image = None
-        
-        # Initialize camera if enabled
-        if self.enable_camera:
-            self.init_camera()
-        
-        self.get_logger().info(f'RoboPoint node initialized with models: {self.models}')
-        if self.enable_camera:
-            self.get_logger().info(f'Camera enabled on device: {self.camera_device}')
+        # Store external images keyed by header.frame_id (so GUI can send images for a specific frame_id)
+        self.external_images = {}
 
-    def init_camera(self):
-        """Initialize and start camera capture"""
-        try:
-            # Try to parse camera device (support both index and device path)
-            if self.camera_device.startswith('/dev/video'):
-                # Extract number from /dev/videoX
-                device_num = int(self.camera_device.split('video')[1])
-            else:
-                device_num = int(self.camera_device)
-            
-            self.camera = cv2.VideoCapture(device_num)
-            
-            if not self.camera.isOpened():
-                self.get_logger().error(f"Failed to open camera device: {self.camera_device}")
-                return
-            
-            # Set camera properties
-            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
-            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
-            self.camera.set(cv2.CAP_PROP_FPS, self.camera_fps)
-            
-            # Verify settings
-            actual_width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
-            actual_height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            actual_fps = self.camera.get(cv2.CAP_PROP_FPS)
-            
-            self.get_logger().info(f"Camera initialized: {actual_width}x{actual_height} @ {actual_fps} FPS")
-            
-            # Start camera thread
-            self.camera_running = True
-            self.camera_thread = threading.Thread(target=self.camera_loop)
-            self.camera_thread.daemon = True
-            self.camera_thread.start()
-            
-        except Exception as e:
-            self.get_logger().error(f"Error initializing camera: {e}")
-            self.camera = None
-
-    def camera_loop(self):
-        """Camera capture loop running in separate thread"""
-        if not self.camera:
-            return
-        
-        # Calculate sleep time based on FPS
-        sleep_time = 1.0 / self.camera_fps
-        
-        while self.camera_running and rclpy.ok():
-            try:
-                ret, frame = self.camera.read()
-                if not ret:
-                    self.get_logger().warn("Failed to read frame from camera")
-                    time.sleep(sleep_time)
-                    continue
-                
-                # Store latest image for affordance processing
-                self.latest_image = frame.copy()
-                
-                # Convert to PIL for processing
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self.latest_pil_image = PILImage.fromarray(rgb_image)
-                
-                # Convert to ROS Image message and publish
-                try:
-                    ros_image = self.bridge.cv2_to_imgmsg(frame, "bgr8")
-                    ros_image.header.stamp = self.get_clock().now().to_msg()
-                    ros_image.header.frame_id = "camera_frame"
-                    self.camera_pub.publish(ros_image)
-                except Exception as e:
-                    self.get_logger().error(f"Error publishing camera image: {e}")
-                
-                time.sleep(sleep_time)
-                
-            except Exception as e:
-                self.get_logger().error(f"Error in camera loop: {e}")
-                time.sleep(sleep_time)
-
-    def cleanup_camera(self):
-        """Clean up camera resources"""
-        self.camera_running = False
-        if self.camera_thread and self.camera_thread.is_alive():
-            self.camera_thread.join(timeout=1.0)
-        
-        if self.camera:
-            self.camera.release()
-            self.camera = None
-            self.get_logger().info("Camera resources cleaned up")
+        self.get_logger().info('RoboPoint node initialized - processing node only')
+        self.get_logger().info('Waiting for camera images from camera_publisher_node or GUI')
 
     def call_service(self, service_type, service_name, request, timeout_sec=30.0):
-        """
-        彻底隔离版 service call：
-        - 临时建 node + client
-        - 用 SingleThreadedExecutor.spin_until_future_complete 等回包
-        - destroy
-        """
-        # 1) 新 node
+        """Isolated service call method"""
         tmp_node = rclpy.create_node('tmp_client_node')
-        # 2) 用同样的 srv type & name
         tmp_client = tmp_node.create_client(service_type, service_name)
         if not tmp_client.wait_for_service(timeout_sec=5.0):
             tmp_node.destroy_node()
             return None
 
-        # 3) call
         future = tmp_client.call_async(request)
-
-        # 4) 临时 executor, spin until ready
         tmp_exec = SingleThreadedExecutor()
         tmp_exec.add_node(tmp_node)
         tmp_exec.spin_until_future_complete(future, timeout_sec=timeout_sec)
         tmp_exec.shutdown()
 
-        # 5) tidy up
         result = future.result() if future.done() else None
         tmp_node.destroy_node()
         return result
 
     def get_model_list(self):
-        """Get available models from controller via ROS2 services - 修復版本"""
+        """Get available models from controller via ROS2 services"""
         try:
             # Refresh all workers first
             refresh_request = RefreshAllWorkers.Request()
@@ -311,51 +201,101 @@ class RoboPointNode(Node):
             self.get_logger().error(f"Error getting model list: {e}")
             return []
 
-    def handle_image_callback(self, msg):
-        """Handle incoming external image messages (kept for flexibility)"""
+    def handle_realsense_callback(self, msg):
+        """Handle incoming RealSense camera image messages"""
         try:
             # Convert ROS Image to OpenCV format
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             
-            # Only update if we're not using internal camera or as fallback
-            if not self.enable_camera or self.latest_image is None:
-                self.latest_image = cv_image
-                
-                # Convert to PIL for processing
-                rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-                self.latest_pil_image = PILImage.fromarray(rgb_image)
+            # Update latest image (RealSense has priority)
+            self.latest_image = cv_image
             
+            # Convert to PIL for processing
+            rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+            self.latest_pil_image = PILImage.fromarray(rgb_image)
+            
+            # Log which camera is being used (throttled to avoid spam)
+            if hasattr(self, '_last_camera_log_time'):
+                if time.time() - self._last_camera_log_time > 10.0:
+                    self.get_logger().info(f"Using RealSense camera: {msg.header.frame_id}")
+                    self._last_camera_log_time = time.time()
+            else:
+                self.get_logger().info(f"RealSense camera connected: {msg.header.frame_id}")
+                self._last_camera_log_time = time.time()
+            
+        except Exception as e:
+            self.get_logger().error(f"Error processing RealSense image: {e}")
+
+    def handle_image_callback(self, msg):
+        """Handle incoming external image messages (from GUI)"""
+        try:
+            # Convert ROS Image to OpenCV format
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+
+            # Always store external images by their header.frame_id so queries can target them
+            frame_id = ''
+            try:
+                frame_id = msg.header.frame_id
+            except Exception:
+                frame_id = ''
+
+            rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+            pil_image = PILImage.fromarray(rgb_image)
+            if frame_id:
+                self.external_images[frame_id] = pil_image
+                self.get_logger().debug(f"Stored external image under frame_id: {frame_id}")
+
+            # If no other source (realsense) has provided an image yet, set latest as fallback
+            if self.latest_image is None:
+                self.latest_image = cv_image
+                self.latest_pil_image = pil_image
+                self.get_logger().info("Using external image from GUI as fallback")
+
         except Exception as e:
             self.get_logger().error(f"Error processing external image: {e}")
 
     def handle_affordance_query(self, msg):
         """Handle spatial affordance query messages"""
-        if self.latest_pil_image is None:
+        # Prefer an image that matches the query's header.frame_id (published by GUI)
+        requested_frame = ''
+        try:
+            requested_frame = msg.header.frame_id
+        except Exception:
+            requested_frame = ''
+
+        pil_image_to_use = None
+        if requested_frame and requested_frame in self.external_images:
+            pil_image_to_use = self.external_images[requested_frame]
+            self.get_logger().debug(f"Using external image matched to query.frame_id: {requested_frame}")
+        else:
+            pil_image_to_use = self.latest_pil_image
+
+        if pil_image_to_use is None:
             self.get_logger().warn("No image available for processing")
             return
-        
+
         try:
             # Process the query
             response = self.process_affordance_request(
-                self.latest_pil_image, 
+                pil_image_to_use, 
                 msg.query_text,
                 msg.image_process_mode
             )
-            
+
             # Publish response
             if response:
                 self.affordance_pub.publish(response)
-                
+
                 # Create and publish visualization
                 vis_image = self.create_visualization(
-                    self.latest_pil_image, 
+                    pil_image_to_use, 
                     response.affordance_points
                 )
                 if vis_image is not None:
                     vis_msg = self.bridge.cv2_to_imgmsg(vis_image, "bgr8")
                     vis_msg.header = msg.header
                     self.visualization_pub.publish(vis_msg)
-                    
+
         except Exception as e:
             self.get_logger().error(f"Error handling affordance query: {e}")
 
@@ -464,7 +404,7 @@ class RoboPointNode(Node):
         return img_str
 
     def query_model(self, state):
-        """Query the vision-language model via ROS2 services - 修復版本"""
+        """Query the vision-language model via ROS2 services"""
         try:
             # Get worker address
             get_worker_request = GetWorkerAddress.Request()
@@ -540,7 +480,7 @@ class RoboPointNode(Node):
             else:
                 generate_request.stop = state.sep2
             
-            # Call worker service using the fixed method
+            # Call worker service
             service_name = f'/model_worker_{worker_name}/generate_stream'
             generate_result = self.call_service(
                 WorkerGenerateStream,
@@ -570,14 +510,12 @@ class RoboPointNode(Node):
 
     def find_vectors(self, text):
         """Extract coordinate vectors from model response"""
-        # Pattern to match tuples with numeric values
         pattern = r"\(([-+]?\d+\.?\d*(?:,\s*[-+]?\d+\.?\d*)*?)\)"
         matches = re.findall(pattern, text)
         
         vectors = []
         for match in matches:
             try:
-                # Split and convert to numbers
                 vector = [float(num.strip()) if '.' in num else int(num.strip()) 
                          for num in match.split(',')]
                 vectors.append(vector)
@@ -587,7 +525,7 @@ class RoboPointNode(Node):
         return vectors
 
     def create_visualization(self, pil_image, affordance_points, cross_size=9, cross_width=4):
-        """Create visualization of affordance points on image, highlighting the highest-confidence point."""
+        """Create visualization of affordance points on image"""
         try:
             if not affordance_points:
                 return None
@@ -596,7 +534,7 @@ class RoboPointNode(Node):
             cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
             h, w = cv_image.shape[:2]
 
-            # 找出最高信心點
+            # Find highest confidence point
             best_pt = max(affordance_points, key=lambda p: p.confidence)
 
             for pt in affordance_points:
@@ -604,7 +542,7 @@ class RoboPointNode(Node):
                 x = int(pt.x * w) if pt.x <= 1.0 else int(pt.x)
                 y = int(pt.y * h) if pt.y <= 1.0 else int(pt.y)
 
-                # 最佳點用綠色、放大；其餘用紅色
+                # Best point in green, larger; others in red
                 if pt is best_pt:
                     color = (0, 255, 0)
                     size  = int(cross_size * 1.5)
@@ -614,11 +552,11 @@ class RoboPointNode(Node):
                     size  = cross_size
                     width = cross_width
 
-                # 畫十字
+                # Draw cross
                 cv2.line(cv_image, (x - size, y - size), (x + size, y + size), color, width)
                 cv2.line(cv_image, (x - size, y + size), (x + size, y - size), color, width)
 
-                # 在點旁顯示 confidence
+                # Show confidence near point
                 cv2.putText(
                     cv_image,
                     f"{pt.confidence:.2f}",
@@ -634,6 +572,10 @@ class RoboPointNode(Node):
             return None
 
     def delayed_model_init(self):
+        """Initialize models once and stop the timer"""
+        if self.model_initialized:
+            return
+            
         self.get_logger().info("Attempting to get model list (delayed)...")
         self.models = self.get_model_list()
         if not self.model_name and self.models:
@@ -643,17 +585,18 @@ class RoboPointNode(Node):
             self.get_logger().info(f"Using specified model: {self.model_name}")
         else:
             self.get_logger().warn("No models available after delayed init.")
+            return
+            
+        # Mark as initialized and destroy the timer
+        self.model_initialized = True
+        self.model_init_timer.destroy()
+        self.get_logger().info("Model initialization completed")
 
     def get_conv_log_filename(self):
         """Get conversation log filename"""
         t = datetime.datetime.now()
         name = os.path.join(LOGDIR, f"{t.year}-{t.month:02d}-{t.day:02d}-conv.json")
         return name
-
-    def destroy_node(self):
-        """Clean up resources when node is destroyed"""
-        self.cleanup_camera()
-        super().destroy_node()
 
 
 def main(args=None):
@@ -670,7 +613,6 @@ def main(args=None):
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        node.cleanup_camera()
         node.destroy_node()
         rclpy.shutdown()
 
