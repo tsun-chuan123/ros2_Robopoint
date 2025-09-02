@@ -18,3 +18,12 @@ __pycache__/
 *.pyd
 *.egg-info/
 dist/
+# IDE
+.vscode/
+# 如果會在 repo 內建 build 目錄，可加上：
+librealsense/build*/
+# ROS 2 build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+ros2_ws/CMakeFiles/
