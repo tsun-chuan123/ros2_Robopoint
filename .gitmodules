@@ -1,3 +1,6 @@
 [submodule "ros2_ws/src/stretch_visual_servoing"]
 	path = ros2_ws/src/stretch_visual_servoing
 	url = https://github.com/hello-robot/stretch_visual_servoing.git
+[submodule "librealsense"]
+	path = librealsense
+	url = https://github.com/IntelRealSense/librealsense.git
