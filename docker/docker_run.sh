@@ -73,13 +73,13 @@ start_interactive_session() {
         source install/local_setup.bash
         ros2 run robopoint_gui robopoint_gui_node
         ;;
-      Stretch_Bridge)
+      Stretch)
         export ROS_DOMAIN_ID=15
         cd ros2_ws/
         source /opt/ros/humble/setup.bash
         colcon build --merge-install
         source install/local_setup.bash
-        ros2 run robopoint_stretch_bridge stretch_bridge
+        ros2 launch robopoint_stretch_bridge stretch_goal_follower.launch.py
         ;;
       ros2_ws)
         export ROS_DOMAIN_ID=15

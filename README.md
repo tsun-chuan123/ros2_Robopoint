@@ -78,10 +78,49 @@ source install/local_setup.bash
 
 5. **Stretch Bridge** – converts RoboPoint affordance results into goal points for Stretch:
 
+   Using the launch file (推薦方式 / Recommended):
+   ```bash
+   ros2 launch robopoint_stretch_bridge stretch_goal_follower.launch.py
+   ```
+   
+   Or using the node directly:
    ```bash
    ros2 run robopoint_stretch_bridge stretch_bridge
    ```
    This node listens to affordance outputs from robopoint_node, extracts the highest-confidence point, projects it into 3D using depth data and camera intrinsics, and publishes a geometry_msgs/PointStamped goal for Stretch to act upon.
+
+### 如何使用 stretch_goal_follower.launch.py (中文說明)
+
+`stretch_goal_follower.launch.py` 是一個 ROS2 launch 檔案，用於啟動 Stretch 機器人目標跟隨功能。此檔案會啟動 `robopoint_stretch_bridge` 節點，該節點負責：
+
+1. **訂閱 RoboPoint 辨識結果**：從 `spatial_affordance_response` 主題接收物體可操作性分析結果
+2. **訂閱深度影像**：從相機獲取深度資訊
+3. **2D 到 3D 轉換**：將 2D 影像座標轉換為 3D 世界座標
+4. **發布目標點**：向 `stretch_goal_point` 主題發布 Stretch 機器人的目標位置
+
+#### 基本使用方法：
+
+```bash
+ros2 launch robopoint_stretch_bridge stretch_goal_follower.launch.py
+```
+
+#### 自訂參數使用方法：
+
+```bash
+ros2 launch robopoint_stretch_bridge stretch_goal_follower.launch.py \
+    depth_topic:=/realsense/depth/image_raw \
+    camera_frame:=camera_depth_optical_frame \
+    fx:=616.0 \
+    fy:=616.0 \
+    cx:=320.0 \
+    cy:=240.0
+```
+
+#### 可調整參數說明：
+- `depth_topic`: 深度影像主題名稱 (預設: `/camera/depth/image_raw`)
+- `camera_frame`: 相機座標系 ID (預設: `camera_frame`)
+- `fx`, `fy`: 相機焦距參數 (預設: 525.0)
+- `cx`, `cy`: 相機主點座標 (預設: 319.5, 239.5)
    
 ## Repository layout
 
